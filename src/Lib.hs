@@ -4,8 +4,10 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+
 module Lib (startServer
            , app
+           , uploadForm
            ) where
 
 import Control.Concurrent
@@ -33,7 +35,7 @@ instance MimeRender HTML HTMLPage where
   mimeRender _ content = unRaw content
 
 
-type API = MultipartForm Mem (MultipartData Mem) :> Post '[JSON] Integer
+type API = "submit" :> Capture "title" String :> MultipartForm Mem (MultipartData Mem) :> Post '[JSON] Integer
   :<|> "forms" :> Raw
   :<|> "form" :> Capture "filename" Filename :> Get '[HTML] HTMLPage
 
@@ -44,22 +46,25 @@ api = Proxy
 -- MultipartData consists in textual inputs,
 -- accessible through its "inputs" field, as well
 -- as files, accessible through its "files" field.
+
+uploadForm :: String -> MultipartData Mem -> Servant.Handler Integer
+uploadForm title multipartData = do
+  liftIO $ do
+    putStrLn $ "Title: " ++ title
+    putStrLn "Inputs:"
+    forM_ (inputs multipartData) $ \input ->
+      putStrLn $ "  " ++ show (iName input) ++ " -> " ++ show (iValue input)
+    forM_ (files multipartData) $ \file -> do
+      let content = fdPayload file
+      putStrLn $ "Content of " ++ show (fdFileName file)
+      LBS.putStr content
+    return 0
+ 
 server :: Server API
-server = upload
+server = uploadForm
   :<|> getform
   :<|> generateForm
   where
-    upload multipartData = do
-      liftIO $ do
-        putStrLn "Inputs:"
-        forM_ (inputs multipartData) $ \input ->
-          putStrLn $ "  " ++ show (iName input)
-                ++ " -> " ++ show (iValue input)
-        forM_ (files multipartData) $ \file -> do
-          let content = fdPayload file
-          putStrLn $ "Content of " ++ show (fdFileName file)
-          LBS.putStr content
-      return 0
     getform = serveDirectoryWebApp "htmlforms"
     generateForm filename = do
       pagecontent <- liftIO (LBS.readFile $ "htmlforms/" ++ filename)
