@@ -7,6 +7,8 @@
 
 module Lib ( startServer
            , startWithLogServer
+           , datadir
+           , tmpdir
            , app
            ) where
 
@@ -25,6 +27,11 @@ import Servant.Multipart
 import Network.HTTP.Media hiding (Accept) -- for HTML ctype definition
 import qualified Data.ByteString.Lazy as LBS
 
+datadir :: FilePath
+datadir = "/tmp/formify"
+
+tmpdir :: FilePath
+tmpdir = "/tmp/formify_tmp"
 type Filename = String
 newtype HTMLPage = HTMLPage { unRaw :: LBS.ByteString}
 
@@ -36,7 +43,7 @@ instance MimeRender HTML HTMLPage where
   mimeRender _ content = unRaw content
 
 
-type API = "submit" :> Capture "title" String :> MultipartForm Mem (MultipartData Mem) :> Post '[JSON] Integer
+type API = "submit" :> Capture "title" String :> MultipartForm Tmp (MultipartData Tmp) :> Post '[JSON] Integer
   :<|> "forms" :> Raw
   :<|> "form" :> Capture "filename" Filename :> Get '[HTML] HTMLPage
 
@@ -44,11 +51,10 @@ type API = "submit" :> Capture "title" String :> MultipartForm Mem (MultipartDat
 api :: Proxy API
 api = Proxy
 
--- MultipartData consists in textual inputs,
--- accessible through its "inputs" field, as well
--- as files, accessible through its "files" field.
-
-uploadForm :: String -> MultipartData Mem -> Servant.Handler Integer
+-- backend store for multipart data
+tmpstore :: MultipartData Tmp
+tmpstore = backend TMP
+uploadForm :: String -> MultipartData Tmp -> Servant.Handler Integer
 uploadForm title multipartData = do
   liftIO $ do
     putStrLn $ "Title: " ++ title
@@ -56,9 +62,9 @@ uploadForm title multipartData = do
     forM_ (inputs multipartData) $ \input ->
       putStrLn $ "  " ++ show (iName input) ++ " -> " ++ show (iValue input)
     forM_ (files multipartData) $ \file -> do
-      let content = fdPayload file
+      let content = fdPayload file -- MultipartResult Tmp = FilePath = String
       putStrLn $ "Content of " ++ show (fdFileName file)
-      LBS.putStr content
+      putStrLn content
     return 0
  
 server :: Server API

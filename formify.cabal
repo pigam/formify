@@ -28,6 +28,7 @@ library
                      , http-media
                      , bytestring
                      , wai-logger
+
   default-language:    Haskell2010
 
 executable formify
@@ -36,6 +37,7 @@ executable formify
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , formify
+                     , directory >= 1.3
   default-language:    Haskell2010
 
 test-suite formify-test
