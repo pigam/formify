@@ -5,9 +5,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module Lib (startServer
+module Lib ( startServer
+           , startWithLogServer
            , app
-           , uploadForm
            ) where
 
 import Control.Concurrent
@@ -18,7 +18,8 @@ import Data.Text.Encoding (encodeUtf8)
 import Network.Socket (withSocketsDo)
 import Network.HTTP.Client hiding (Proxy)
 import Network.HTTP.Client.MultipartFormData
-import Network.Wai.Handler.Warp
+import Network.Wai.Handler.Warp (run, runSettings, setLogger, defaultSettings,setPort)
+import Network.Wai.Logger (withStdoutLogger)
 import Servant
 import Servant.Multipart
 import Network.HTTP.Media hiding (Accept) -- for HTML ctype definition
@@ -76,3 +77,7 @@ app = serve api server
 startServer :: IO ()
 startServer = run 8080 app
 
+startWithLogServer = do
+  withStdoutLogger $ \applogger -> do
+    let settings = setPort 8080 $ setLogger applogger defaultSettings
+    runSettings settings app

@@ -27,6 +27,7 @@ library
                      , http-client
                      , http-media
                      , bytestring
+                     , wai-logger
   default-language:    Haskell2010
 
 executable formify
