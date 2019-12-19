@@ -7,8 +7,6 @@
 
 module Lib ( startServer
            , startWithLogServer
-           , datadir
-           , tmpdir
            , app
            ) where
 
@@ -22,16 +20,13 @@ import Network.HTTP.Client hiding (Proxy)
 import Network.HTTP.Client.MultipartFormData
 import Network.Wai.Handler.Warp (run, runSettings, setLogger, defaultSettings,setPort)
 import Network.Wai.Logger (withStdoutLogger)
+import Network.Wai.Parse (defaultParseRequestBodyOptions)
 import Servant
 import Servant.Multipart
 import Network.HTTP.Media hiding (Accept) -- for HTML ctype definition
+import System.Directory (createDirectoryIfMissing)
 import qualified Data.ByteString.Lazy as LBS
 
-datadir :: FilePath
-datadir = "/tmp/formify"
-
-tmpdir :: FilePath
-tmpdir = "/tmp/formify_tmp"
 type Filename = String
 newtype HTMLPage = HTMLPage { unRaw :: LBS.ByteString}
 
@@ -51,9 +46,6 @@ type API = "submit" :> Capture "title" String :> MultipartForm Tmp (MultipartDat
 api :: Proxy API
 api = Proxy
 
--- backend store for multipart data
-tmpstore :: MultipartData Tmp
-tmpstore = backend TMP
 uploadForm :: String -> MultipartData Tmp -> Servant.Handler Integer
 uploadForm title multipartData = do
   liftIO $ do
@@ -77,13 +69,30 @@ server = uploadForm
       pagecontent <- liftIO (LBS.readFile $ "htmlforms/" ++ filename)
       return (HTMLPage pagecontent)
 
+opts :: FilePath -> MultipartOptions Tmp
+opts tmpdir = MultipartOptions {
+    generalOptions = defaultParseRequestBodyOptions
+  , backendOptions = TmpBackendOptions
+    {
+      getTmpDir = do
+        createDirectoryIfMissing False tmpdir
+        return tmpdir
+    , filenamePat = "formify-file.buf"
+    }
+  }
+
 app :: Application
 app = serve api server
+
+
+appWithConf :: FilePath -> FilePath -> Application
+appWithConf tmpdir datadir = serveWithContext api context server where
+  context = (opts tmpdir) :. EmptyContext
 
 startServer :: IO ()
 startServer = run 8080 app
 
-startWithLogServer = do
+startWithLogServer tmpdir datadir = do
   withStdoutLogger $ \applogger -> do
     let settings = setPort 8080 $ setLogger applogger defaultSettings
-    runSettings settings app
+    runSettings settings $ appWithConf tmpdir datadir
