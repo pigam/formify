@@ -24,7 +24,7 @@ import Network.Wai.Parse (defaultParseRequestBodyOptions)
 import Servant
 import Servant.Multipart
 import Network.HTTP.Media hiding (Accept) -- for HTML ctype definition
-import System.Directory (createDirectoryIfMissing, createDirectoryLink)
+import System.Directory
 import qualified Data.ByteString.Lazy as LBS
 import Data.UUID
 import Data.UUID.V4
@@ -42,7 +42,7 @@ instance MimeRender HTML HTMLPage where
   mimeRender _ content = unRaw content
 
 
-type API = "submit" :> Capture "title" String :> MultipartForm Tmp (MultipartData Tmp) :> Post '[JSON] UUID
+type API = "submit" :> Capture "title" String :> MultipartForm Tmp (MultipartData Tmp) :> Post '[JSON] String
   :<|> "forms" :> Raw
   :<|> "form" :> Capture "filename" Filename :> Get '[HTML] HTMLPage
 
@@ -50,18 +50,41 @@ type API = "submit" :> Capture "title" String :> MultipartForm Tmp (MultipartDat
 api :: Proxy API
 api = Proxy
 
-uploadForm :: FilePath -> FormField -> String -> MultipartData Tmp -> Servant.Handler UUID
+-- must return resByUUIDDir
+createStorageDirectories storageDir email = do
+  let resByEmail = storageDir </> "results" </> (Text.unpack email)
+        -- test
+  exists <- catch (do
+    link <- pathIsSymbolicLink resByEmail
+    target <- getSymbolicLinkTarget resByEmail
+    exists <- doesDirectoryExist target
+    if exists
+      then
+        return $ Just target
+      else
+        return Nothing)
+            (\e -> do
+                let err = show (e :: IOException)
+                putStrLn err
+                return Nothing)
+  case exists of
+    Just target -> do return target
+    _ -> do
+      uuid <- nextRandom
+      let resByUUIDDir = storageDir </> "results_by_uuid" </> (toString uuid)
+      createDirectoryIfMissing True resByUUIDDir
+      createDirectoryIfMissing False $ storageDir </> "results"
+      createDirectoryLink resByUUIDDir resByEmail
+      return resByUUIDDir
+
+uploadForm :: FilePath -> FormField -> String -> MultipartData Tmp -> Servant.Handler String
 uploadForm datadir emailField title multipartData = 
   do
     case lookupInput emailField multipartData of
       Just email -> liftIO $ do
-        uuid <- nextRandom
         let storageDir = datadir </> title
-        let resByUUIDDir = storageDir </> "results_by_uuid" </> (toString uuid)
         let resByEmail = storageDir </> "results" </> (Text.unpack email)
-        createDirectoryIfMissing True resByUUIDDir
-        createDirectoryIfMissing False $ datadir </> title </> "results"
-        createDirectoryLink resByUUIDDir resByEmail
+        resByUUIDDir <- createStorageDirectories storageDir email
         putStrLn $ "Title: " ++ title
         putStrLn "Inputs:"
         forM_ (inputs multipartData) $ \input ->
@@ -70,7 +93,7 @@ uploadForm datadir emailField title multipartData =
           let content = fdPayload file -- MultipartResult Tmp = FilePath = String
           putStrLn $ "Content of " ++ show (fdFileName file)
           putStrLn content
-        return uuid
+        return "ok"
       Nothing -> throwError (err400 {
           errBody = LBS.fromStrict . encodeUtf8 . pack   $ "missing email value in " ++ (unpack emailField) ++ " field"
         })
