@@ -5,8 +5,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module Lib ( startServer
-           , startWithLogServer
+module Lib ( startWithLogServer
            , app
            ) where
 
@@ -92,7 +91,7 @@ appWithConf tmpdir datadir = serveWithContext api context server where
 startServer :: IO ()
 startServer = run 8080 app
 
-startWithLogServer tmpdir datadir = do
+startWithLogServer port tmpdir datadir = do
   withStdoutLogger $ \applogger -> do
-    let settings = setPort 8080 $ setLogger applogger defaultSettings
+    let settings = setPort port $ setLogger applogger defaultSettings
     runSettings settings $ appWithConf tmpdir datadir

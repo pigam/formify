@@ -12,4 +12,4 @@ tmpdir = "/tmp/formify_tmp"
 main :: IO ()
 main = do
   createDirectoryIfMissing True datadir
-  startWithLogServer tmpdir datadir
+  startWithLogServer 8080 tmpdir datadir
