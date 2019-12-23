@@ -4,9 +4,10 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-
+{-# LANGUAGE OverloadedStrings #-}
 module Lib ( startWithLogServer
            , app
+           , FormField
            ) where
 
 import Control.Concurrent
@@ -23,10 +24,14 @@ import Network.Wai.Parse (defaultParseRequestBodyOptions)
 import Servant
 import Servant.Multipart
 import Network.HTTP.Media hiding (Accept) -- for HTML ctype definition
-import System.Directory (createDirectoryIfMissing)
+import System.Directory (createDirectoryIfMissing, createDirectoryLink)
 import qualified Data.ByteString.Lazy as LBS
-
+import Data.UUID
+import Data.UUID.V4
+import System.FilePath
+import Data.Text as Text
 type Filename = String
+type FormField = Text
 newtype HTMLPage = HTMLPage { unRaw :: LBS.ByteString}
 
 -- HTML mediatype
@@ -37,7 +42,7 @@ instance MimeRender HTML HTMLPage where
   mimeRender _ content = unRaw content
 
 
-type API = "submit" :> Capture "title" String :> MultipartForm Tmp (MultipartData Tmp) :> Post '[JSON] Integer
+type API = "submit" :> Capture "title" String :> MultipartForm Tmp (MultipartData Tmp) :> Post '[JSON] UUID
   :<|> "forms" :> Raw
   :<|> "form" :> Capture "filename" Filename :> Get '[HTML] HTMLPage
 
@@ -45,21 +50,34 @@ type API = "submit" :> Capture "title" String :> MultipartForm Tmp (MultipartDat
 api :: Proxy API
 api = Proxy
 
-uploadForm :: String -> MultipartData Tmp -> Servant.Handler Integer
-uploadForm title multipartData = do
-  liftIO $ do
-    putStrLn $ "Title: " ++ title
-    putStrLn "Inputs:"
-    forM_ (inputs multipartData) $ \input ->
-      putStrLn $ "  " ++ show (iName input) ++ " -> " ++ show (iValue input)
-    forM_ (files multipartData) $ \file -> do
-      let content = fdPayload file -- MultipartResult Tmp = FilePath = String
-      putStrLn $ "Content of " ++ show (fdFileName file)
-      putStrLn content
-    return 0
+uploadForm :: FilePath -> FormField -> String -> MultipartData Tmp -> Servant.Handler UUID
+uploadForm datadir emailField title multipartData = 
+  do
+    case lookupInput emailField multipartData of
+      Just email -> liftIO $ do
+        uuid <- nextRandom
+        let storageDir = datadir </> title
+        let resByUUIDDir = storageDir </> "results_by_uuid" </> (toString uuid)
+        let resByEmail = storageDir </> "results" </> (Text.unpack email)
+        createDirectoryIfMissing True resByUUIDDir
+        createDirectoryIfMissing False $ datadir </> title </> "results"
+        createDirectoryLink resByUUIDDir resByEmail
+        putStrLn $ "Title: " ++ title
+        putStrLn "Inputs:"
+        forM_ (inputs multipartData) $ \input ->
+          putStrLn $ "  " ++ show (iName input) ++ " -> " ++ show (iValue input)
+        forM_ (files multipartData) $ \file -> do
+          let content = fdPayload file -- MultipartResult Tmp = FilePath = String
+          putStrLn $ "Content of " ++ show (fdFileName file)
+          putStrLn content
+        return uuid
+      Nothing -> throwError (err400 {
+          errBody = LBS.fromStrict . encodeUtf8 . pack   $ "missing email value in " ++ (unpack emailField) ++ " field"
+        })
+
  
-server :: Server API
-server = uploadForm
+server :: FilePath -> FormField -> Server API
+server datadir emailField = uploadForm datadir emailField
   :<|> getform
   :<|> generateForm
   where
@@ -80,18 +98,18 @@ opts tmpdir = MultipartOptions {
     }
   }
 
-app :: Application
-app = serve api server
+app :: FilePath -> FormField -> Application
+app datadir emailField = serve api $ server datadir emailField
 
 
-appWithConf :: FilePath -> FilePath -> Application
-appWithConf tmpdir datadir = serveWithContext api context server where
+appWithConf :: FilePath -> FilePath -> FormField -> Application
+appWithConf tmpdir datadir emailField = serveWithContext api context (server datadir emailField) where
   context = (opts tmpdir) :. EmptyContext
 
-startServer :: IO ()
-startServer = run 8080 app
 
-startWithLogServer port tmpdir datadir = do
+startWithLogServer port tmpdir datadir emailField = do
+  createDirectoryIfMissing True tmpdir
+  createDirectoryIfMissing True datadir
   withStdoutLogger $ \applogger -> do
     let settings = setPort port $ setLogger applogger defaultSettings
-    runSettings settings $ appWithConf tmpdir datadir
+    runSettings settings $ appWithConf tmpdir datadir emailField
