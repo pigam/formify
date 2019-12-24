@@ -26,11 +26,14 @@ import Servant.Multipart
 import Network.HTTP.Media hiding (Accept) -- for HTML ctype definition
 import System.Directory
 import qualified Data.ByteString.Lazy as LBS
-import Data.UUID
+import Data.ByteString.UTF8 as BSU
+import Data.UUID as UUID
 import Data.UUID.V4
 import System.FilePath
 import Data.Text as Text
 import Data.MIME.Types as MIME
+import Data.Csv (encode)
+import qualified Data.ByteString.Lazy.Char8 as BL8 (putStr, putStrLn, writeFile)
 type Filename = String
 type FormField = Text
 newtype HTMLPage = HTMLPage { unRaw :: LBS.ByteString}
@@ -73,7 +76,7 @@ createStorageDirectories storageDir email = do
     Just target -> do return target
     _ -> do
       uuid <- nextRandom
-      let resByUUIDDir = storageDir </> "results_by_uuid" </> (toString uuid)
+      let resByUUIDDir = storageDir </> "results_by_uuid" </> (UUID.toString uuid)
       createDirectoryIfMissing True resByUUIDDir
       createDirectoryIfMissing False $ storageDir </> "results"
       createDirectoryLink resByUUIDDir resByEmail
@@ -100,29 +103,17 @@ uploadForm datadir emailField title multipartData =
         let storageDir = datadir </> title
         let resByEmail = storageDir </> "results" </> (Text.unpack email)
         resByUUIDDir <- createStorageDirectories storageDir email
-        putStrLn $ "Title: " ++ title
-        putStrLn "Inputs:"
-        forM_ (inputs multipartData) $ \input ->
-          putStrLn $ "  " ++ show (iName input) ++ " -> " ++ show (iValue input)
-        putStrLn "files transformed : "
+-- generate csv from non files inputs
+        let csvheaders = fmap iName (inputs multipartData)
+        let csvvals = fmap iValue (inputs multipartData)
+        BL8.writeFile (resByUUIDDir </> "result.csv") $ encode [csvheaders, csvvals]
+-- copy uploaded files to resByUUIDDir
         forM_ (fileTransform $ files multipartData) $ \(fd, n, inputname) -> do
           let extension = case MIME.guessExtension MIME.defaultmtd True (unpack $ fdFileCType fd) of
                 Just ext -> ext
                 Nothing -> ""
           let targetName = resByUUIDDir </> (format inputname n) -<.> extension
- -- putStrLn $ "fdFileName : " ++ (show $ fdFileName fd)
-          -- putStrLn $ "fdPayload : " ++ (show $ fdPayload fd)
-          -- putStrLn $ "fdInputName : " ++ (show inputname) ++ "_" ++ (show n)
-          -- putStrLn $ "mime type : " ++ (show $ fdFileCType fd)
-          -- putStrLn $ "target : " ++ targetName
           copyFile (fdPayload fd) targetName
-
-        -- forM_ (files multipartData) $ \file -> do
-        --   let content = fdPayload file -- MultipartResult Tmp = FilePath = String
-        --   putStrLn $ "Content of " ++ show (fdFileName file) ++ " : "
-        --   putStr content
-        --   putStrLn ""
-        --   putStrLn $ "formField : " ++ show (fdInputName file)
         return "ok"
       Nothing -> throwError (err400 {
           errBody = LBS.fromStrict . encodeUtf8 . pack   $ "missing email value in " ++ (unpack emailField) ++ " field"

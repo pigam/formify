@@ -33,6 +33,8 @@ library
                      , uuid
                      , filepath
                      , MissingH
+                     , utf8-string >= 1.0
+                     , cassava
 
   default-language:    Haskell2010
 
