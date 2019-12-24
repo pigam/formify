@@ -36,6 +36,7 @@ library
                      , utf8-string >= 1.0
                      , cassava
                      , servant-lucid
+                     , lucid
 
   default-language:    Haskell2010
 

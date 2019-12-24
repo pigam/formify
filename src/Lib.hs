@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -25,6 +26,7 @@ import Servant
 import Servant.Multipart
 import Network.HTTP.Media hiding (Accept) -- for HTML ctype definition
 import System.Directory
+import System.FilePath
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.UTF8 as BSU
 import Data.UUID as UUID
@@ -32,24 +34,43 @@ import Data.UUID.V4
 import System.FilePath
 import Data.Text as Text
 import Data.MIME.Types as MIME
-import Data.Csv (encode)
+import qualified Data.Csv as Csv (encode)
 import qualified Data.ByteString.Lazy.Char8 as BL8 (putStr, putStrLn, writeFile)
-import qualified Servant.HTML.Lucid as Lucid
+import Servant.HTML.Lucid
+import Lucid
+import Data.Aeson
+import Data.Aeson.Types
+import GHC.Generics 
 type Filename = String
 type FormField = Text
+type Email = String
+
 newtype HTMLPage = HTMLPage { unRaw :: LBS.ByteString}
 
 -- HTML mediatype
-data HTML
-instance Accept HTML where
+data RawHTML
+instance Accept RawHTML where
   contentType _ = "text" // "html" /: ("charset", "utf-8")
-instance MimeRender HTML HTMLPage where
+instance MimeRender RawHTML HTMLPage where
   mimeRender _ content = unRaw content
 
+data Submission = Submission { uuid :: String
+                             , email :: Email
+                             } deriving (Eq, Show, Generic)
 
-type API = "submit" :> Capture "title" String :> MultipartForm Tmp (MultipartData Tmp) :> Post '[Lucid.HTML] String 
+instance ToJSON Submission
+instance ToHtml Submission where
+  toHtml sub =
+    dl_ $ do
+      dt_ "unique token"
+      dd_ (toHtml $ uuid sub)
+      dt_ "email"
+      dd_ (toHtml $ email sub)
+  toHtmlRaw = toHtml
+  
+type API = "submit" :> Capture "title" String :> MultipartForm Tmp (MultipartData Tmp) :> Post '[HTML, JSON] Submission
   :<|> "forms" :> Raw
-  :<|> "form" :> Capture "filename" Filename :> Get '[HTML] HTMLPage
+  :<|> "form" :> Capture "filename" Filename :> Get '[RawHTML] HTMLPage
 
 
 api :: Proxy API
@@ -80,6 +101,7 @@ createStorageDirectories storageDir email = do
       let resByUUIDDir = storageDir </> "results_by_uuid" </> (UUID.toString uuid)
       createDirectoryIfMissing True resByUUIDDir
       createDirectoryIfMissing False $ storageDir </> "results"
+      createDirectoryIfMissing False $ storageDir </> "mail"
       createDirectoryLink resByUUIDDir resByEmail
       return resByUUIDDir
 
@@ -96,31 +118,34 @@ format :: Text -> Integer -> String
 format t 0 = unpack $ Text.drop 9 t
 format t n = (unpack $ Text.drop 9 t) ++ "_" ++ (show n)
 
-uploadForm :: FilePath -> FormField -> String -> MultipartData Tmp -> Servant.Handler String
-uploadForm datadir emailField title multipartData = 
-  do
-    case lookupInput emailField multipartData of
-      Just email -> liftIO $ do
-        let storageDir = datadir </> title
-        let resByEmail = storageDir </> "results" </> (Text.unpack email)
-        resByUUIDDir <- createStorageDirectories storageDir email
--- generate csv from non files inputs
-        let csvheaders = fmap iName (inputs multipartData)
-        let csvvals = fmap iValue (inputs multipartData)
-        BL8.writeFile (resByUUIDDir </> "result.csv") $ encode [csvheaders, csvvals]
--- copy uploaded files to resByUUIDDir
-        forM_ (fileTransform $ files multipartData) $ \(fd, n, inputname) -> do
-          let extension = case MIME.guessExtension MIME.defaultmtd True (unpack $ fdFileCType fd) of
-                Just ext -> ext
-                Nothing -> ""
-          let targetName = resByUUIDDir </> (format inputname n) -<.> extension
-          copyFile (fdPayload fd) targetName
-        return "ok"
-      Nothing -> throwError (err400 {
-          errBody = LBS.fromStrict . encodeUtf8 . pack   $ "missing email value in " ++ (unpack emailField) ++ " field"
-        })
 
- 
+uploadForm :: FilePath -> FormField -> String -> MultipartData Tmp -> Servant.Handler Submission
+uploadForm datadir emailField title multipartData = 
+  case lookupInput emailField multipartData of
+    Just email -> liftIO $ do
+      let storageDir = datadir </> title
+      let resByEmail = storageDir </> "results" </> (Text.unpack email)
+      resByUUIDDir <- createStorageDirectories storageDir email
+      let uuid = takeBaseName resByUUIDDir
+      -- generate csv from non files inputs
+      let csvheaders = fmap iName (inputs multipartData)
+      let csvvals = fmap iValue (inputs multipartData)
+      BL8.writeFile (resByUUIDDir </> "result.csv") $ Csv.encode [csvheaders, csvvals]
+      -- copy uploaded files to resByUUIDDir
+      forM_ (fileTransform $ files multipartData) $ \(fd, n, inputname) -> do
+        let extension = case MIME.guessExtension MIME.defaultmtd True (unpack $ fdFileCType fd) of
+              Just ext -> ext
+              Nothing -> ""
+        let targetName = resByUUIDDir </> (format inputname n) -<.> extension
+        copyFile (fdPayload fd) targetName
+      let submission = Submission uuid (Text.unpack email)
+      let jsonmail = storageDir </> "mail" </> (Text.unpack email) <.> "json"
+      encodeFile jsonmail submission
+      return submission
+    Nothing -> throwError (err400 {
+        errBody = LBS.fromStrict . encodeUtf8 . pack   $ "missing email value in " ++ (unpack emailField) ++ " field"
+      })
+
 server :: FilePath -> FormField -> Server API
 server datadir emailField = uploadForm datadir emailField
   :<|> getform
