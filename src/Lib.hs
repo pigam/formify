@@ -30,6 +30,7 @@ import Data.UUID
 import Data.UUID.V4
 import System.FilePath
 import Data.Text as Text
+import Data.MIME.Types as MIME
 type Filename = String
 type FormField = Text
 newtype HTMLPage = HTMLPage { unRaw :: LBS.ByteString}
@@ -51,6 +52,7 @@ api :: Proxy API
 api = Proxy
 
 -- must return resByUUIDDir
+createStorageDirectories :: FilePath -> Text -> IO FilePath
 createStorageDirectories storageDir email = do
   let resByEmail = storageDir </> "results" </> (Text.unpack email)
         -- test
@@ -77,6 +79,19 @@ createStorageDirectories storageDir email = do
       createDirectoryLink resByUUIDDir resByEmail
       return resByUUIDDir
 
+
+fileTransform :: [FileData t] -> [(FileData t, Integer, Text)]
+fileTransform  = Prelude.foldr ff [] where
+  ff f [] = [(f, 0, fdInputName f)]
+  ff f ((g, n, t): old) 
+        | fdInputName f == t, n == 0  = ( f, 2, fdInputName f) : (g,1,t) : old
+        | fdInputName f == t = ( f, n+1, fdInputName f) : (g,n,t) : old
+        | otherwise = (f, 0, fdInputName f) : (g, n, t) : old
+
+format :: Text -> Integer -> String
+format t 0 = unpack $ Text.drop 9 t
+format t n = (unpack $ Text.drop 9 t) ++ "_" ++ (show n)
+
 uploadForm :: FilePath -> FormField -> String -> MultipartData Tmp -> Servant.Handler String
 uploadForm datadir emailField title multipartData = 
   do
@@ -89,10 +104,25 @@ uploadForm datadir emailField title multipartData =
         putStrLn "Inputs:"
         forM_ (inputs multipartData) $ \input ->
           putStrLn $ "  " ++ show (iName input) ++ " -> " ++ show (iValue input)
-        forM_ (files multipartData) $ \file -> do
-          let content = fdPayload file -- MultipartResult Tmp = FilePath = String
-          putStrLn $ "Content of " ++ show (fdFileName file)
-          putStrLn content
+        putStrLn "files transformed : "
+        forM_ (fileTransform $ files multipartData) $ \(fd, n, inputname) -> do
+          let extension = case MIME.guessExtension MIME.defaultmtd True (unpack $ fdFileCType fd) of
+                Just ext -> ext
+                Nothing -> ""
+          let targetName = resByUUIDDir </> (format inputname n) -<.> extension
+ -- putStrLn $ "fdFileName : " ++ (show $ fdFileName fd)
+          -- putStrLn $ "fdPayload : " ++ (show $ fdPayload fd)
+          -- putStrLn $ "fdInputName : " ++ (show inputname) ++ "_" ++ (show n)
+          -- putStrLn $ "mime type : " ++ (show $ fdFileCType fd)
+          -- putStrLn $ "target : " ++ targetName
+          copyFile (fdPayload fd) targetName
+
+        -- forM_ (files multipartData) $ \file -> do
+        --   let content = fdPayload file -- MultipartResult Tmp = FilePath = String
+        --   putStrLn $ "Content of " ++ show (fdFileName file) ++ " : "
+        --   putStr content
+        --   putStrLn ""
+        --   putStrLn $ "formField : " ++ show (fdInputName file)
         return "ok"
       Nothing -> throwError (err400 {
           errBody = LBS.fromStrict . encodeUtf8 . pack   $ "missing email value in " ++ (unpack emailField) ++ " field"

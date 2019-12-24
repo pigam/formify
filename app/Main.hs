@@ -15,5 +15,8 @@ emailField = "fy-pi-email"
 main :: IO ()
 
 main = do
+  let port = 8080
+  putStrLn $ "server started on port " ++ (show port)
+
   createDirectoryIfMissing True datadir
-  startWithLogServer 8080 tmpdir datadir emailField
+  startWithLogServer port tmpdir datadir emailField
