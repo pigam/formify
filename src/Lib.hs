@@ -34,6 +34,7 @@ import Data.Text as Text
 import Data.MIME.Types as MIME
 import Data.Csv (encode)
 import qualified Data.ByteString.Lazy.Char8 as BL8 (putStr, putStrLn, writeFile)
+import qualified Servant.HTML.Lucid as Lucid
 type Filename = String
 type FormField = Text
 newtype HTMLPage = HTMLPage { unRaw :: LBS.ByteString}
@@ -46,7 +47,7 @@ instance MimeRender HTML HTMLPage where
   mimeRender _ content = unRaw content
 
 
-type API = "submit" :> Capture "title" String :> MultipartForm Tmp (MultipartData Tmp) :> Post '[JSON] String
+type API = "submit" :> Capture "title" String :> MultipartForm Tmp (MultipartData Tmp) :> Post '[Lucid.HTML] String 
   :<|> "forms" :> Raw
   :<|> "form" :> Capture "filename" Filename :> Get '[HTML] HTMLPage
 
