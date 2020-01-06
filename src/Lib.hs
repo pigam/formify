@@ -36,7 +36,7 @@ import Data.Text as Text
 import Data.MIME.Types as MIME
 import qualified Data.Csv as Csv (encode)
 import qualified Data.ByteString.Lazy.Char8 as BL8 (putStr, putStrLn, writeFile)
-import Servant.HTML.Lucid
+import Servant.HTML.Lucid -- HTML
 import Lucid
 import Data.Aeson
 import Data.Aeson.Types
@@ -70,8 +70,8 @@ instance ToHtml Submission where
   
 type API = "submit" :> Capture "title" String :> MultipartForm Tmp (MultipartData Tmp) :> Post '[HTML, JSON] Submission
   :<|> "forms" :> Raw
-  :<|> "form" :> Capture "filename" Filename :> Get '[RawHTML] HTMLPage
-
+  :<|> "form" :> Capture "filename" Filename :> Get '[RawHTML] HTMLPage -- manual HTML
+  :<|> "submit" :> Capture "title" String :> Capture "uuid" String :> Get '[HTML] String -- lucid generated HTML
 
 api :: Proxy API
 api = Proxy
@@ -136,8 +136,7 @@ uploadForm datadir emailField title multipartData =
         let extension = case MIME.guessExtension MIME.defaultmtd True (unpack $ fdFileCType fd) of
               Just ext -> ext
               Nothing -> ""
-        let targetName = resByUUIDDir </> (format inputname n) -<.> extension
-        copyFile (fdPayload fd) targetName
+        copyFile (fdPayload fd) $ resByUUIDDir </> (format inputname n) -<.> extension 
       let submission = Submission uuid (Text.unpack email)
       let jsonmail = storageDir </> "mail" </> (Text.unpack email) <.> "json"
       encodeFile jsonmail submission
@@ -146,10 +145,14 @@ uploadForm datadir emailField title multipartData =
         errBody = LBS.fromStrict . encodeUtf8 . pack   $ "missing email value in " ++ (unpack emailField) ++ " field"
       })
 
+getSubmission :: FilePath -> FormField -> String -> String -> Servant.Handler String
+getSubmission datadir emailField title uuid = return "kowabunga"
+  
 server :: FilePath -> FormField -> Server API
 server datadir emailField = uploadForm datadir emailField
   :<|> getform
   :<|> generateForm
+  :<|> getSubmission datadir emailField
   where
     getform = serveDirectoryWebApp "htmlforms"
     generateForm filename = do
